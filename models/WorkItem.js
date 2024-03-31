@@ -2,6 +2,7 @@ const { fetch } = require("undici");
 const { InputInfo } = require("./InputInfo");
 const { MissingInputInfo } = require("../utils/erros/missingInputInfo.error");
 const { OutputDestinationSequence } = require("./OutputDestinationSequence");
+const { config } = require("../data/config");
 
 class WorkItem {
     /** @type { import("../types/dicom").GeneralDicomJson } */
@@ -15,7 +16,7 @@ class WorkItem {
      * @param {string} upsInstanceUid 
      */
     static async getWorkItem(upsInstanceUid) {
-        let fetchWorkItemRes = await fetch(`http://192.168.77.1:8082/dicom-web/workitems/${upsInstanceUid}`, {
+        let fetchWorkItemRes = await fetch(`${config.upsServer.url}/workitems/${upsInstanceUid}`, {
             method: "GET"
         });
         /** @type { import("../types/dicom").GeneralDicomJson[] } */

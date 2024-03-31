@@ -6,16 +6,14 @@ const { config } = require("../data/config");
 const { storeInstance } = require("../utils/dicom");
 
 module.exports = fp(async (fastify) => {
-    // TODO: add config for ws url
-    const ws = new WebSocket("ws://192.168.77.1:8082/ws/subscribers/AI_ORCHESTRATOR");
+    const ws = new WebSocket(config.eventReporter.websocket);
 
     ws.on("error", (err) => {
         fastify.log.error(err);
     });
 
     ws.on("open", () => {
-        // TODO: change to config url
-        fastify.log.info("Websocket connection opened (ws://192.168.77.1:8082/ws/subscribers/AI_ORCHESTRATOR)");
+        fastify.log.info(`Websocket connection opened (${config.eventReporter.websocket})`);
     });
 
     ws.on("message", async (/**  @type {Buffer} */data) => {

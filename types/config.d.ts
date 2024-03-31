@@ -3,6 +3,16 @@ type AiModel = {
     url: string;
 };
 
-export type AiOrchestratorConfig = {
-    aiModels: AiModel[]
+type EventReporter = {
+    websocket: string;
+};
+
+type UpsServerConfig = {
+    url: string;
 }
+
+export type AiOrchestratorConfig = {
+    aiModels: AiModel[];
+    eventReporter: EventReporter;
+    upsServer: UpsServerConfig;
+};
