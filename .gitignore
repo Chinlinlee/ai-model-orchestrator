@@ -58,3 +58,5 @@ profile*
 *flamegraph*
 
 data/config.js
+data/data.db
+.env

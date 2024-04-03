@@ -2,6 +2,7 @@
 
 const path = require('node:path')
 const AutoLoad = require('@fastify/autoload')
+const { Repository } = require("./repositories/sqlite");
 
 // Pass --options via CLI arguments in command to enable these options.
 const options = {}
@@ -25,6 +26,10 @@ module.exports = async function (fastify, opts) {
     dir: path.join(__dirname, 'routes'),
     options: Object.assign({}, opts)
   })
+
+  fastify.log.info("repository initializing");
+  await Repository.init();
+  fastify.log.info("repository initialized");
 }
 
 module.exports.options = options
