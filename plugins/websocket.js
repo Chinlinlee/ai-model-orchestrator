@@ -114,8 +114,8 @@ module.exports = fp(async (fastify) => {
             }
             return storeResult;
         } catch (e) {
-            fastify.log.error(`can not store instance for ${JSON.stringify(uids)}, store url: ${stowUrl}`);
-            throw e;
+            fastify.log.error(`can not store instance for ${JSON.stringify(uids)}, store url: ${stowUrl}`, e);
+            return false;
         }
     }
 
