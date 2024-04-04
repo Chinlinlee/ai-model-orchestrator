@@ -219,7 +219,8 @@ module.exports = fp(async (fastify) => {
             fastify.log.info(`updating work item ${upsInstanceUid} performed procedure sequence to final statement`);
             await WorkItem.updateWorkItemToFinalPerformedProcedureSequence(
                 upsInstanceUid,
-                transactionUid
+                transactionUid,
+                aiResult
             );
             fastify.log.info(`updated work item ${upsInstanceUid} performed procedure sequence to final statement successfully`);
 

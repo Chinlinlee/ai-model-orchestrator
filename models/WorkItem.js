@@ -157,7 +157,14 @@ class WorkItem {
             throw Error(`update work to final statement failed, work item: ${upsInstanceUid}, ${await fetchUpdateWorkItemRes.text()}`);
         }
     }
-    static async updateWorkItemToFinalPerformedProcedureSequence(upsInstanceUid, transactionUid) {
+
+    /**
+     * 
+     * @param {string} upsInstanceUid 
+     * @param {string} transactionUid 
+     * @param {import("../types/aiResult").AiResult} aiResult 
+     */
+    static async updateWorkItemToFinalPerformedProcedureSequence(upsInstanceUid, transactionUid, aiResult) {
         let performedProcedureSequence = {
             "00081195": {
                 "vr": "UI",
@@ -173,6 +180,63 @@ class WorkItem {
                             "vr": "DT",
                             "Value": [
                                 `${getFormattedDateTimeNow()}`
+                            ]
+                        },
+                        "00404033": {
+                            "vr": "SQ",
+                            "Value": [
+                                {
+                                    "0040E020": {
+                                        "vr": "CS",
+                                        "Value": [
+                                            "DICOM"
+                                        ]
+                                    },
+                                    "0020000D": {
+                                        "vr": "UI",
+                                        "Value": [
+                                            `${aiResult.dataset.string("x0020000d")}`
+                                        ]
+                                    },
+                                    "0020000E": {
+                                        "vr": "UI",
+                                        "Value": [
+                                            `${aiResult.dataset.string("x0020000e")}`
+                                        ]
+                                    },
+                                    "00081199": {
+                                        "vr": "SQ",
+                                        "Value": [
+                                            {
+                                                "00081150": {
+                                                    "vr": "UI",
+                                                    "Value": [
+                                                        `${aiResult.dataset.string("x00080016")}`
+                                                    ]
+                                                },
+                                                "00081155": {
+                                                    "vr": "UI",
+                                                    "Value": [
+                                                        `${aiResult.dataset.string("x00080018")}`
+                                                    ]
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "0040E023": {
+                                        "vr": "SQ",
+                                        "Value": [
+                                            {
+                                                "0040E010": {
+                                                    "vr": "UR",
+                                                    "Value": [
+                                                        `${config.pacs.url}/${config.pacs.wadoPrefix}/studies/${aiResult.dataset.string("x0020000d")}/series/${aiResult.dataset.string("x0020000e")}/instances/${aiResult.dataset.string("x00080018")}`
+                                                    ]
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
                             ]
                         }
                     }
