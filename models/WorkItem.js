@@ -3,6 +3,7 @@ const { InputInfo } = require("./InputInfo");
 const { MissingInputInfo } = require("../utils/erros/missingInputInfo.error");
 const { OutputDestinationSequence } = require("./OutputDestinationSequence");
 const { config } = require("../data/config");
+const { getFormattedDateTimeNow } = require("../utils/dicom");
 
 class WorkItem {
     /** @type { import("../types/dicom").GeneralDicomJson } */
@@ -26,6 +27,175 @@ class WorkItem {
     }
 
     /**
+     * 
+     * @param {string} upsInstanceUid 
+     * @param {string} transactionUid
+     * @param { "IN PROGRESS" | "COMPLETED" | "CANCELED"} state 
+     * @returns 
+     */
+    static async updateWorkItemState(upsInstanceUid, transactionUid, state) {
+        if (state !== "IN PROGRESS" && state !== "COMPLETED" && state !== "CANCELED") {
+            throw new Error("Invalid state");
+        }
+
+        let changeStateBody = {
+            "00081195": {
+                "vr": "UI",
+                "Value": [
+                    `${transactionUid}`
+                ]
+            },
+            "00741000": {
+                "vr": "CS",
+                "Value": [
+                    `${state}`
+                ]
+            }
+        };
+
+        let fetchWorkItemRes = await fetch(`${config.upsServer.url}/workitems/${upsInstanceUid}/state`, {
+            method: "PUT",
+            body: JSON.stringify([{
+                ...changeStateBody
+            }]),
+            headers: {
+                "Content-Type": "application/json"
+            }
+        });
+
+        if (fetchWorkItemRes.status !== 200) {
+            throw new Error(`Failed to update work item state for ${upsInstanceUid}, ${await fetchWorkItemRes.text()}`);
+        }
+
+        return true;
+    }
+
+    static async updateWorkItemStateToStartingPerformedProcedureSequence(upsInstanceUid, transactionUid, aiModelName) {
+        let performedProcedureSequence = {
+            "00081195": {
+                "vr": "UI",
+                "Value": [
+                    `${transactionUid}`
+                ]
+            },
+            "00741216": {
+                "vr": "SQ",
+                "Value": [
+                    {
+                        "00404050": {
+                            "vr": "DT",
+                            "Value": [
+                                `${getFormattedDateTimeNow()}`
+                            ]
+                        },
+                        "00404028": {
+                            "vr": "SQ",
+                            "Value": [
+                                {
+                                    "00080100": {
+                                        "vr": "SH",
+                                        "Value": [
+                                            "AI_ORCHESTRATOR"
+                                        ]
+                                    },
+                                    "00080102": {
+                                        "vr": "SH",
+                                        "Value": [
+                                            "99RACCOON"
+                                        ]
+                                    },
+                                    "00080104": {
+                                        "vr": "LO",
+                                        "Value": [
+                                            `AI Orchestrator`
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        "00404019": {
+                            "vr": "SQ",
+                            "Value": [
+                                {
+                                    "00080100": {
+                                        "vr": "SH",
+                                        "Value": [
+                                            `${aiModelName}`
+                                        ]
+                                    },
+                                    "00080102": {
+                                        "vr": "SH",
+                                        "Value": [
+                                            "99RACCOON"
+                                        ]
+                                    },
+                                    "00080104": {
+                                        "vr": "LO",
+                                        "Value": [
+                                            `AI Orchestration for ${aiModelName}`
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+
+        let fetchUpdateWorkItemRes = await fetch(`${config.upsServer.url}/workitems/${upsInstanceUid}`, {
+            method: "POST",
+            body: JSON.stringify([{
+                ...performedProcedureSequence
+            }]),
+            headers: {
+                "content-type": "application/json"
+            }
+        })
+
+        if (fetchUpdateWorkItemRes.status !== 200) {
+            throw Error(`update work to final statement failed, work item: ${upsInstanceUid}, ${await fetchUpdateWorkItemRes.text()}`);
+        }
+    }
+    static async updateWorkItemToFinalPerformedProcedureSequence(upsInstanceUid, transactionUid) {
+        let performedProcedureSequence = {
+            "00081195": {
+                "vr": "UI",
+                "Value": [
+                    `${transactionUid}`
+                ]
+            },
+            "00741216": {
+                "vr": "SQ",
+                "Value": [
+                    {
+                        "00404051": {
+                            "vr": "DT",
+                            "Value": [
+                                `${getFormattedDateTimeNow()}`
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+
+        let fetchUpdateWorkItemRes = await fetch(`${config.upsServer.url}/workitems/${upsInstanceUid}`, {
+            method: "POST",
+            body: JSON.stringify([{
+                ...performedProcedureSequence
+            }]),
+            headers: {
+                "content-type": "application/json"
+            }
+        })
+
+        if (fetchUpdateWorkItemRes.status !== 200) {
+            throw Error(`update work to final statement failed, work item: ${upsInstanceUid}, ${await fetchUpdateWorkItemRes.text()}`);
+        }
+    }
+
+    /**
      * 獲取 AI Model 的識別標籤，使用他來決定要執行哪個 AI Model
      * @returns {string}
      */
@@ -39,6 +209,10 @@ class WorkItem {
             throw new MissingInputInfo("missing input info sequence, that we cannot recognize the input images");
         }
         return iis.Value.map(v=> new InputInfo(v));
+    }
+
+    getProcedureStepState() {
+        return this.#dicomJson?.["00741000"]?.Value?.[0];
     }
 
     getUids() {
