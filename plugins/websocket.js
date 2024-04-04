@@ -8,19 +8,39 @@ const { WorkItem } = require("../models/WorkItem");
 const { config } = require("../data/config");
 const { storeInstance } = require("../utils/dicom");
 const { AiOrchestrateTaskRepository } = require("../repositories/sqlite/repositories/aiOrchestrateTask.repo");
+const { generateUid } = require("../utils/dicom");
+
+class LocalWebSocket {
+    /** @type {import("ws").WebSocket} */
+    static ws;
+    static RECONNECT_TIMES = 0;
+    constructor() { }
+
+    /**
+     * @param { import("fastify").FastifyInstance } fastify
+     * @param {(data: Buffer)=> void} messageFn 
+     */
+    static init(fastify, messageFn) {
+        LocalWebSocket.ws = new WebSocket(config.eventReporter.websocket);
+
+        LocalWebSocket.ws.on("error", (err) => {
+            fastify.log.error(err);
+        });
+
+        LocalWebSocket.ws.on("open", () => {
+            fastify.log.info(`Websocket connection opened (${config.eventReporter.websocket})`);
+        });
+
+        LocalWebSocket.ws.on("message", messageFn);
+    }
+
+
+}
+
 
 module.exports = fp(async (fastify) => {
-    const ws = new WebSocket(config.eventReporter.websocket);
 
-    ws.on("error", (err) => {
-        fastify.log.error(err);
-    });
-
-    ws.on("open", () => {
-        fastify.log.info(`Websocket connection opened (${config.eventReporter.websocket})`);
-    });
-
-    ws.on("message", async (/**  @type {Buffer} */data) => {
+    const handleWebSocketMessage = async (/**  @type {Buffer} */data) => {
         let receivedData = JSON.parse(data.toString());
         let receivedEventReport = new DicomEventReport(receivedData);
         let affectedInstanceUid = receivedEventReport.getAffectedSopInstanceUid();
@@ -31,24 +51,30 @@ module.exports = fp(async (fastify) => {
         let procedureStepLabel = workItem.getProcedureStepLabel();
 
         let hitAiModel = config.aiModels.find(v => v.name === procedureStepLabel);
-        if (hitAiModel) {
+        if (hitAiModel && workItem.getProcedureStepState() === "SCHEDULED") {
 
             let uids = workItem.getUids();
             let outputDestination = workItem.getStowRsUrl();
             fastify.log.child({ dicomUids: uids }).info(`calling AI model ${hitAiModel.name}, url: ${hitAiModel.url}`);
             await createTask(workItem.getSopInstanceUid(), hitAiModel.name, outputDestination);
+
+            let transactionUid = generateUid();
+            await updateWorkItemForProcessingTask(
+                workItem.getSopInstanceUid(),
+                transactionUid,
+                hitAiModel.name
+            );
+
+
             let aiResult = await callAi(uids, hitAiModel);
             if (aiResult) {
                 // Send ai result to PACS
                 let storeResult = await sendInstanceToDest(uids, aiResult, outputDestination);
                 if (storeResult) {
-                    await AiOrchestrateTaskRepository.updateTaskByUpsUid(
+                    await postProcessAfterStoring(
                         workItem.getSopInstanceUid(),
-                        {
-                            process_status: "SUCCESS",
-                            store_dest_status: "SUCCESS",
-                            ai_result_instance_uid: aiResult.dataset.string("x00080018")
-                        }
+                        transactionUid,
+                        aiResult
                     );
                 }
             } else {
@@ -62,10 +88,20 @@ module.exports = fp(async (fastify) => {
         } else {
             fastify.log.warn(`The work item missing procedure step label that can not be recognized, work item: ${workItem.getSopInstanceUid()}`);
         }
+    };
+
+    LocalWebSocket.init(fastify, handleWebSocketMessage);
+
+    LocalWebSocket.ws.on("close", () => {
+        fastify.log.warn(`Websocket connection closed (${config.eventReporter.websocket})`);
+        setTimeout(() => {
+            LocalWebSocket.init(fastify, handleWebSocketMessage);
+            LocalWebSocket.RECONNECT_TIMES++;
+        }, 1000);
     });
 
     process.on("beforeExit", () => {
-        ws.close();
+        LocalWebSocket.ws.close();
     });
 
     /**
@@ -114,7 +150,8 @@ module.exports = fp(async (fastify) => {
             }
             return storeResult;
         } catch (e) {
-            fastify.log.error(`can not store instance for ${JSON.stringify(uids)}, store url: ${stowUrl}`, e);
+            fastify.log.error(`can not store instance for ${JSON.stringify(uids)}, store url: ${stowUrl}`);
+            fastify.log.error(e);
             return false;
         }
     }
@@ -133,5 +170,67 @@ module.exports = fp(async (fastify) => {
             store_dest_status: "SCHEDULED",
             store_dest: storeDest
         });
+    }
+
+    async function updateWorkItemForProcessingTask(upsInstanceUid, transactionUid, aiModelName) {
+        try {
+            fastify.log.info(`updating work item ${upsInstanceUid} status to IN PROGRESS`);
+            await WorkItem.updateWorkItemState(upsInstanceUid, transactionUid, "IN PROGRESS");
+            fastify.log.info(``)
+        } catch (e) {
+            fastify.log.error("can not update work item state to IN PROGRESS, work item uid: " + upsInstanceUid);
+            fastify.log.error(e);
+            throw e;
+        }
+
+        try {
+            await WorkItem.updateWorkItemStateToStartingPerformedProcedureSequence(
+                upsInstanceUid,
+                transactionUid,
+                aiModelName
+            );
+        } catch (e) {
+            fastify.log.error("can not update work item's performed procedure sequence, work item uid: " + upsInstanceUid);
+            fastify.log.error(e);
+            throw e;
+        }
+
+    }
+
+    /**
+     * 
+     * @param {string} upsInstanceUid 
+     * @param {string} transactionUid 
+     * @param {import("../types/aiResult").AiResult} aiResult 
+     */
+    async function postProcessAfterStoring(upsInstanceUid, transactionUid, aiResult) {
+        try {
+            fastify.log.info(`start updating task ${upsInstanceUid} status to SUCCESS`);
+            await AiOrchestrateTaskRepository.updateTaskByUpsUid(
+                upsInstanceUid,
+                {
+                    process_status: "SUCCESS",
+                    store_dest_status: "SUCCESS",
+                    ai_result_instance_uid: aiResult.dataset.string("x00080018")
+                }
+            );
+            fastify.log.info(`updated task ${upsInstanceUid} status to SUCCESS`);
+
+            fastify.log.info(`updating work item ${upsInstanceUid} performed procedure sequence to final statement`);
+            await WorkItem.updateWorkItemToFinalPerformedProcedureSequence(
+                upsInstanceUid,
+                transactionUid
+            );
+            fastify.log.info(`updated work item ${upsInstanceUid} performed procedure sequence to final statement successfully`);
+
+            fastify.log.info(`updating work item ${upsInstanceUid} status to COMPLETED`);
+            await WorkItem.updateWorkItemState(upsInstanceUid, transactionUid, "COMPLETED");
+            fastify.log.info(`updated work item ${upsInstanceUid} status to COMPLETED`);
+        } catch(e) {
+            fastify.log.error(`can not update task ${upsInstanceUid} status to COMPLETED`);
+            fastify.log.error(e);
+            throw e;
+        }
+        
     }
 });
