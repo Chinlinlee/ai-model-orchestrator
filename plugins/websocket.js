@@ -51,39 +51,40 @@ module.exports = fp(async (fastify) => {
         let procedureStepLabel = workItem.getProcedureStepLabel();
 
         let hitAiModel = config.aiModels.find(v => v.name === procedureStepLabel);
-        if (hitAiModel && workItem.getProcedureStepState() === "SCHEDULED") {
-
-            let uids = workItem.getUids();
-            let outputDestination = workItem.getStowRsUrl();
-            fastify.log.child({ dicomUids: uids }).info(`calling AI model ${hitAiModel.name}, url: ${hitAiModel.url}`);
-            await createTask(workItem.getSopInstanceUid(), hitAiModel.name, outputDestination);
-
-            let transactionUid = generateUid();
-            await updateWorkItemForProcessingTask(
-                workItem.getSopInstanceUid(),
-                transactionUid,
-                hitAiModel.name
-            );
-
-
-            let aiResult = await callAi(uids, hitAiModel);
-            if (aiResult) {
-                // Send ai result to PACS
-                let storeResult = await sendInstanceToDest(uids, aiResult, outputDestination);
-                if (storeResult) {
-                    await postProcessAfterStoring(
+        if (hitAiModel) {
+            if (workItem.getProcedureStepState() === "SCHEDULED") {
+                let uids = workItem.getUids();
+                let outputDestination = workItem.getStowRsUrl();
+                fastify.log.child({ dicomUids: uids }).info(`calling AI model ${hitAiModel.name}, url: ${hitAiModel.url}`);
+                await createTask(workItem.getSopInstanceUid(), hitAiModel.name, outputDestination);
+    
+                let transactionUid = generateUid();
+                await updateWorkItemForProcessingTask(
+                    workItem.getSopInstanceUid(),
+                    transactionUid,
+                    hitAiModel.name
+                );
+    
+    
+                let aiResult = await callAi(uids, hitAiModel);
+                if (aiResult) {
+                    // Send ai result to PACS
+                    let storeResult = await sendInstanceToDest(uids, aiResult, outputDestination);
+                    if (storeResult) {
+                        await postProcessAfterStoring(
+                            workItem.getSopInstanceUid(),
+                            transactionUid,
+                            aiResult
+                        );
+                    }
+                } else {
+                    await AiOrchestrateTaskRepository.updateTaskByUpsUid(
                         workItem.getSopInstanceUid(),
-                        transactionUid,
-                        aiResult
+                        {
+                            process_status: "FAILED"
+                        }
                     );
                 }
-            } else {
-                await AiOrchestrateTaskRepository.updateTaskByUpsUid(
-                    workItem.getSopInstanceUid(),
-                    {
-                        process_status: "FAILED"
-                    }
-                );
             }
         } else {
             fastify.log.warn(`The work item missing procedure step label that can not be recognized, work item: ${workItem.getSopInstanceUid()}`);
